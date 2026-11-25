@@ -185,7 +185,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     const W2 = 1080;
     const multi = c.groups.length > 1;
     const rowH0 = 96;
-    const need = 484 + c.groups.reduce((a, g) => a + 150 + 56 + 90 + g.parts.length * rowH0 + 16 + 56, 0) + 116 + 210 + 20;
+    const need = 484 + c.groups.reduce((a, g) => a + 150 + 56 + 90 + Math.max(1, g.parts.length) * rowH0 + 16 + 56, 0) + 116 + 210 + 20;
     const H2 = Math.max(1620, need);
     const canvas = document.createElement('canvas');
     canvas.width = W2; canvas.height = H2;
@@ -254,7 +254,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     let y = ty + th + 64;
     const footerTop = H2 - 210;
     const totalH = 116;
-    const fitRow = Math.floor((footerTop - 56 - totalH - 56 - y - c.groups.reduce((a, g) => a + 150 + 56 + 90 + 16 + 56, 0)) / Math.max(1, c.groups.reduce((a, g) => a + g.parts.length, 0)));
+    const fitRow = Math.floor((footerTop - 56 - totalH - 56 - y - c.groups.reduce((a, g) => a + 150 + 56 + 90 + 16 + 56, 0)) / Math.max(1, c.groups.reduce((a, g) => a + Math.max(1, g.parts.length), 0)));
     const rowH = Math.max(60, Math.min(104, fitRow));
     c.groups.forEach((g, gi) => {
         // doctor panel
@@ -272,7 +272,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
         y += 150 + 56;
 
         // classifications panel
-        const ph = 90 + g.parts.length * rowH + 16;
+        const ph = 90 + Math.max(1, g.parts.length) * rowH + 16;
         roundRect(ctx, px, y, pw, ph, 30);
         ctx.fillStyle = '#ffffff'; ctx.fill();
         ctx.textAlign = 'right'; ctx.direction = 'rtl';
@@ -286,6 +286,12 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
             ctx.fillText(ltr(`${g.total} ${g.total === 1 ? 'حالة' : 'حالات'}`), px + 40, y + 56);
         }
         let ry = y + 84;
+        if (!g.parts.length) {
+            ctx.textAlign = 'right'; ctx.direction = 'rtl';
+            ctx.fillStyle = '#7c9496';
+            ctx.font = '700 40px Cairo';
+            ctx.fillText('مفيش حالات اليوم ده', px + pw - 40, ry + rowH / 2 + 14);
+        }
         g.parts.forEach((p, i) => {
             ctx.textAlign = 'right'; ctx.direction = 'rtl';
             ctx.fillStyle = '#0f4a52';

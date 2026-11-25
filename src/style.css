@@ -115,3 +115,7 @@ body { background: #e9f2f2; }
 .bk-quick-text { width: 100%; box-sizing: border-box; border: 1.5px solid #cfe3df; border-radius: 12px; padding: 12px 14px; font-family: inherit; font-size: 16px; font-weight: 600; color: #0c3f46; background: #fbfdfd; resize: vertical; min-height: 84px; line-height: 1.9; }
 .bk-quick-row { display: flex; flex-direction: column; gap: 8px; }
 .bk-quick-row input { width: 100%; box-sizing: border-box; border: 1.5px solid #cfe3df; border-radius: 12px; padding: 12px 14px; font-family: inherit; font-size: 16px; background: #fbfdfd; }
+
+.bk-btn.bk-del { width: auto; flex: none; min-height: 44px; margin-top: 0; padding: 0 18px; border-radius: 14px; font-size: 16px; }
+.bk-row > div[style] { min-width: 0; }
+.bk-err { color: #b3261e; font-size: 15px; font-weight: 700; margin: 6px 0 0; }
