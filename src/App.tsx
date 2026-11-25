@@ -12,7 +12,7 @@ type Tab = 'doctors' | 'cases' | 'oplist';
 
 const TZ = 'Africa/Cairo';
 const PROCS = ['معده', 'قولون', 'معده و قولون', 'ERCP'];
-const TIMES = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00'];
+const TIMES = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
 const WD = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const OP_DAYS = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
 const DEMO_OVERRIDE: string | null = null;
@@ -337,6 +337,7 @@ export function App() {
                 </div>
                 <div className="bk-field"><span>اليوم</span>
                     <div className="bk-days">{days.map(d => <button key={d} type="button" className={'bk-day' + (d === fDay ? ' on' : '')} onClick={() => setFDay(d)}>{dayName(d)}<small><bdi dir="ltr">{dm(d)}</bdi></small></button>)}</div>
+                    <label className="bk-field bk-far"><span>أو اختار تاريخ بعيد (حجز مسبق){!days.includes(fDay) && <b> — المختار: {dayName(fDay)} <bdi dir="ltr">{fDay.split('-').reverse().join('/')}</bdi></b>}</span><input type="date" value={fDay} min={todayISO()} onChange={e => { if (e.target.value) setFDay(e.target.value); }} /></label>
                 </div>
                 <div className="bk-field"><span>الساعة</span>
                     <div className="bk-chips">{TIMES.map(t => <button key={t} type="button" className={'bk-chip' + (t === fTime ? ' on' : '')} onClick={() => setFTime(t)}><bdi dir="ltr">{fmtTime(t)}</bdi></button>)}</div>

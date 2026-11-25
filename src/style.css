@@ -126,3 +126,4 @@ body { background: #e9f2f2; }
 .bk-dayrow.on { border-color: #0f5a63; background: #eaf4f3; }
 .bk-dayrow-main { min-width: 0; }
 .bk-dayrow .bk-pill { flex: none; }
+.bk-far { margin-top: 4px; } .bk-far b { color: #0f5a63; }
