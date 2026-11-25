@@ -56,6 +56,8 @@ function rowOf(line: string): { proc: Proc; key: string; label: string } | null 
     if (ws.length < 2) return null;
     return { proc: p, key: aliasKey(ws.join(' ')), label: ws.join(' ') };
 }
+// Confirmed by the user (WhatsApp 25 Nov 2026 4:34 PM): these English names are these registered doctors.
+export const DEFAULT_ALIASES: Record<string, string> = { 'hassan abdelaziz elhaw mohammed': 'د.محمد الحو', 'shehata ashraf': 'د.اشرف شحاته' };
 export function parseList(text: string, doctors: { name: string }[], aliases: Record<string, string> = {}): ScanGroup[] {
     const rowDoc = text.split('\n').some(l => rowOf(l.trim()));
     const lastName = (n: string) => { const ws = words(n).filter(w => w !== 'د' && w !== 'دكتور'); return ws[ws.length - 1] || ''; };

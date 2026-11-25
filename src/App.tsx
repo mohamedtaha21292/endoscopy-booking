@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalState } from './useLocalState';
 import { mergeBookings, mergeDoctors, CANON_DOCTORS, fixDoctorName, nameNeedsFix } from './migrate';
 import { cardImageURL, opListImageURL } from './cardImage';
-import { readImage, parseList, unclearLines, norm as ocrNorm, aliasKey } from './ocr';
+import { DEFAULT_ALIASES, readImage, parseList, unclearLines, norm as ocrNorm, aliasKey } from './ocr';
 
 type Doctor = { id: string; name: string; day?: string };
 type Booking = { id: string; doctorId: string; doctorName: string; patient: string; proc: string; day: string; time: string; status: 'confirmed' | 'pending'; sex?: string; age?: string; room?: string; count?: number; parts?: { proc: string; count: number }[] };
@@ -155,16 +155,17 @@ export function App() {
     const [scanRev, setScanRev] = useState<Rev[] | null>(null);
     const [scanRaw, setScanRaw] = useState('');
     const [scanAck, setScanAck] = useState(false);
+    const [scanNote, setScanNote] = useState('');
     const [aliasMap, setAliasMap] = useLocalState<Record<string, string>>('bk-alias.v1', {});
     const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files && e.target.files[0];
         e.target.value = '';
         if (!f) return;
-        setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null); setScanAck(false);
+        setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null); setScanAck(false); setScanNote('');
         try {
             const texts = await readImage(f, setScanPct);
             const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + (g.parts.reduce((b, p) => b + p.count, 0) + g.amb.length) * (g.unassigned ? -2 : 1), 0);
-            const all = texts.map((t, i) => ({ t, i, g: parseList(t, doctors, aliasMap) }));
+            const all = texts.map((t, i) => ({ t, i, g: parseList(t, doctors, { ...DEFAULT_ALIASES, ...aliasMap }) }));
             // Reads 0-1 are English-only on the enhanced image (for English tables); 2-4 are Arabic+English on the original. Use the English-table reads only when they actually found table rows (surgeon names); otherwise keep the Arabic-list reads.
             const rowReads = all.filter(c => c.i < 2 && c.g.some(g => g.key));
             const cands = rowReads.length ? rowReads : all.filter(c => c.i >= 2);
@@ -172,7 +173,13 @@ export function App() {
             const text = cands[0].t; const groups = cands[0].g;
             setScanRaw(text);
             if (!groups.some(g => g.parts.length || g.amb.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
-            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })), skip: false, ok: false, aliasKey: g.key })));
+            else {
+                const revs: Rev[] = groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })), skip: false, ok: false, aliasKey: g.key }));
+                // Everything clear (registered doctor, no held numbers, no unclear lines): distribute straight away. Anything unclear stops here for review.
+                const clear = unclearLines(text, doctors).length === 0 && revs.every(r => r.name.trim() && isReg(r.name) && r.amb.length === 0);
+                if (clear) { applyRev(revs); setScanNote('اتوزعت تلقائيًا: ' + revs.map(r => `${r.name} ${r.text.split('\n').reduce((b, l) => { const m = l.match(/^\s*([0-9]+)/); return b + (m ? Number(m[1]) : (l.trim() ? 1 : 0)); }, 0)}`).join(' ، ')); }
+                else setScanRev(revs);
+            }
         } catch { setScanErr('القراءة ما نفعتش على الجهاز ده. اكتب الأعداد بإيدك.'); }
         setScanBusy(false);
     };
@@ -181,6 +188,9 @@ export function App() {
     const scanBlocked = !scanRev || (unclearLines(scanRaw, doctors).length > 0 && !scanAck) || scanRev.some(r => !r.skip && (!r.name.trim() || r.amb.some(a => !a.pick) || (!isReg(r.name) && !r.ok)));
     const applyScan = () => {
         if (!scanRev || scanBlocked) return;
+        applyRev(scanRev);
+    };
+    const applyRev = (scanRev: Rev[]) => {
         const mainName = opDoctor ? opDoctor.name : '';
         const full = scanRev.filter(r => !r.skip).map(r => ({ ...r, text: [r.text.trim(), ...r.amb.map(a => `${a.pick === 'count' ? a.n : 1} ${a.proc}`)].filter(Boolean).join('\n') }));
         const main = full.filter(r => r.name === mainName);
@@ -464,6 +474,7 @@ export function App() {
                 </div>
                 {scanBusy ? <p className="bk-muted" role="status">بقرا الصورة على موبايلك… {Math.round(scanPct * 100)}%</p> : null}
                 {scanErr ? <p className="bk-err">{scanErr}</p> : null}
+                {scanNote ? <p className="bk-muted" role="status">{scanNote}</p> : null}
                 {scanRev ? <div className="bk-quick">
                     <strong>راجع قبل الاعتماد</strong>
                     <span className="bk-muted">القراءة الآلية ممكن تغلط، خصوصًا الخط اليدوي. عدّل أي سطر.</span>
