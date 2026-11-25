@@ -2,9 +2,9 @@ import hospital from './photos/hospital.jpg';
 import logo from './photos/logo.png';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalState } from './useLocalState';
-import { mergeBookings, mergeDoctors, CANON_DOCTORS } from './migrate';
+import { mergeBookings, mergeDoctors, CANON_DOCTORS, fixDoctorName, nameNeedsFix } from './migrate';
 import { cardImageURL, opListImageURL } from './cardImage';
-import { readImage, parseList } from './ocr';
+import { readImage, parseList, unclearLines } from './ocr';
 
 type Doctor = { id: string; name: string; day?: string };
 type Booking = { id: string; doctorId: string; doctorName: string; patient: string; proc: string; day: string; time: string; status: 'confirmed' | 'pending'; sex?: string; age?: string; room?: string; count?: number; parts?: { proc: string; count: number }[] };
@@ -14,7 +14,7 @@ const TZ = 'Africa/Cairo';
 const PROCS = ['معده', 'قولون', 'معده و قولون', 'ERCP'];
 const TIMES = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
 const WD = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-const OP_DAYS = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
+const OP_DAYS = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
 const DEMO_OVERRIDE: string | null = null;
 
 const seedDoctors: Doctor[] = CANON_DOCTORS;
@@ -131,6 +131,13 @@ export function App() {
     const [opExtraAll, setOpExtraAll, opExtraSaved] = useLocalState<Record<string, { name: string; text: string }[]>>('bk-opextra.v1', {});
     const opExtras = opExtraAll[opDate] || [];
     const setOpExtras = (list: { name: string; text: string }[]) => setOpExtraAll({ ...opExtraAll, [opDate]: list });
+    // Exact rename: د.اشرف شحته -> د.اشرف شحاته (doctor record, booking names, saved extra-consultant names). Nothing else changes.
+    useEffect(() => {
+        if (!ready || !opExtraSaved.ready) return;
+        if (doctors.some(d => nameNeedsFix(d.name))) setDoctors(doctors.map(d => (nameNeedsFix(d.name) ? { ...d, name: fixDoctorName(d.name) } : d)));
+        if (bookings.some(b => nameNeedsFix(b.doctorName))) setBookings(bookings.map(b => (nameNeedsFix(b.doctorName) ? { ...b, doctorName: fixDoctorName(b.doctorName) } : b)));
+        if (Object.values(opExtraAll).some(l => l.some(e => nameNeedsFix(e.name)))) setOpExtraAll(Object.fromEntries(Object.entries(opExtraAll).map(([k, l]) => [k, l.map(e => (nameNeedsFix(e.name) ? { ...e, name: fixDoctorName(e.name) } : e))])));
+    }, [ready, opExtraSaved.ready, doctors, bookings, opExtraAll]);
     const opExtraGroups = opExtras.map(e => { const parts = parseParts(e.text); return { doctorName: e.name.trim(), parts, total: parts.reduce((a, p) => a + p.count, 0) }; }).filter(g => g.total > 0);
     const opMissingName = opExtras.some(e => !e.name.trim() && parseParts(e.text).length > 0);
     const opGroups = [
@@ -141,7 +148,7 @@ export function App() {
     const opExtraKey = JSON.stringify(opExtras);
     useEffect(() => { setOpCardUrl(null); setOpShareNote(''); }, [opExtraKey]);
     // Photo of the paper list: read on the phone, shown for review, applied only after the user agrees.
-    type Rev = { name: string; known: boolean; text: string };
+    type Rev = { name: string; known: boolean; text: string; amb: { line: string; proc: string; n: number; pick: '' | 'count' | 'row' }[] };
     const [scanBusy, setScanBusy] = useState(false);
     const [scanPct, setScanPct] = useState(0);
     const [scanErr, setScanErr] = useState('');
@@ -154,20 +161,21 @@ export function App() {
         setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null);
         try {
             const texts = await readImage(f, setScanPct);
-            const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + g.parts.reduce((b, p) => b + p.count, 0), 0);
+            const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + g.parts.reduce((b, p) => b + p.count, 0) + g.amb.length, 0);
             const cands = texts.map(t => ({ t, g: parseList(t, doctors) })); cands.sort((a, b) => sum(b.g) - sum(a.g)); // stable: on a tie the first (row-ordered) reading wins
             const text = cands[0].t; const groups = cands[0].g;
             setScanRaw(text);
-            if (!groups.some(g => g.parts.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
-            else setScanRev(groups.filter(g => g.parts.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n') })));
+            if (!groups.some(g => g.parts.length || g.amb.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
+            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })) })));
         } catch { setScanErr('القراءة ما نفعتش على الجهاز ده. اكتب الأعداد بإيدك.'); }
         setScanBusy(false);
     };
     const applyScan = () => {
-        if (!scanRev) return;
+        if (!scanRev || scanRev.some(r => r.amb.some(a => !a.pick))) return;
         const mainName = opDoctor ? opDoctor.name : '';
-        const main = scanRev.filter(r => r.name === mainName);
-        const others = scanRev.filter(r => r.name !== mainName);
+        const full = scanRev.map(r => ({ ...r, text: [r.text.trim(), ...r.amb.map(a => `${a.pick === 'count' ? a.n : 1} ${a.proc}`)].filter(Boolean).join('\n') }));
+        const main = full.filter(r => r.name === mainName);
+        const others = full.filter(r => r.name !== mainName);
         if (main.length) setOpText(main.map(r => r.text).join('\n'));
         const merged = new Map<string, string>();
         others.forEach(r => merged.set(r.name, merged.has(r.name) ? merged.get(r.name) + '\n' + r.text : r.text));
@@ -345,7 +353,7 @@ export function App() {
                 <button type="button" className="bk-btn bk-btn-go" disabled={!fPatient.trim()} onClick={addBooking}><Ico d={I.check} size={20} />تسجيل الحجز وإنشاء صورة التأكيد</button>
                 <div className="bk-quick">
                     <span className="bk-muted">أو سجّل العدد بس من غير أسماء المرضى — اكتب كل تصنيف وعدده في سطر</span>
-                    <textarea className="bk-quick-text" rows={3} dir="rtl" placeholder={'مثال:\n1 معده\n1 قولون'} value={fCountText} onChange={e => setFCountText(e.target.value)} />
+                        <textarea className="bk-quick-text" rows={3} dir="rtl" placeholder={'مثال:\n1 معده\n1 قولون'} value={fCountText} onChange={e => setFCountText(e.target.value)} />
                     <div className="bk-quick-row">
                         <button type="button" className="bk-btn" disabled={!totalCount} onClick={addCountOnly}><Ico d={I.plus} size={18} />تسجيل العدد{totalCount ? ` (الإجمالي ${totalCount})` : ''}</button>
                     </div>
@@ -450,14 +458,23 @@ export function App() {
                 {scanRev ? <div className="bk-quick">
                     <strong>راجع قبل الاعتماد</strong>
                     <span className="bk-muted">القراءة الآلية ممكن تغلط، خصوصًا الخط اليدوي. عدّل أي سطر.</span>
+                    {unclearLines(scanRaw, doctors).length ? <p className="bk-err">سطور مش واضحة ومتحسبتش، راجعها وضيفها بإيدك لو لازم: {unclearLines(scanRaw, doctors).join(' | ')}</p> : null}
+                    <span className="bk-muted">الإجمالي المقروء: {scanRev.reduce((a, r) => a + r.text.split('\n').reduce((b, l) => { const m = l.match(/^\s*([0-9٠-٩]+)/); return b + (m ? Number(m[1].replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))) : (l.trim() ? 1 : 0)); }, 0), 0)} حالة{scanRev.some(r => r.amb.some(a => !a.pick)) ? ` + ${scanRev.reduce((a, r) => a + r.amb.filter(x => !x.pick).length, 0)} سطر مستني اختيارك` : ''}</span>
                     {scanRev.map((r, i) => <div key={i} className="bk-field">
                         <input dir="rtl" value={r.name} placeholder="اسم الاستشاري" onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} />
                         {!r.known ? <p className="bk-err">الاسم ده مش من الأطباء المسجلين — راجعه.</p> : null}
+                        {r.amb.map((a, k) => <div key={k} className="bk-err" role="group">
+                            <div>سطر محتاج اختيارك (مش متحسب لحد ما تختار): {a.line}</div>
+                            <div className="bk-two">
+                                <button type="button" className="bk-btn bk-btn-light" aria-pressed={a.pick === 'count'} style={a.pick === 'count' ? { outline: '3px solid #0a7' } : undefined} onClick={() => setScanRev(scanRev.map((x, j) => j === i ? { ...x, amb: x.amb.map((y, q) => q === k ? { ...y, pick: 'count' } : y) } : x))}>{a.n} حالات</button>
+                                <button type="button" className="bk-btn bk-btn-light" aria-pressed={a.pick === 'row'} style={a.pick === 'row' ? { outline: '3px solid #0a7' } : undefined} onClick={() => setScanRev(scanRev.map((x, j) => j === i ? { ...x, amb: x.amb.map((y, q) => q === k ? { ...y, pick: 'row' } : y) } : x))}>رقم صف (حالة واحدة)</button>
+                            </div>
+                        </div>)}
                         <textarea className="bk-quick-text" rows={Math.max(3, r.text.split('\n').length)} dir="rtl" value={r.text} onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, text: ev.target.value } : x))} />
                     </div>)}
                     <details><summary className="bk-muted">النص اللي اتقرا</summary><pre dir="rtl" style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{scanRaw}</pre></details>
                     <div className="bk-two">
-                        <button type="button" className="bk-btn bk-btn-go" disabled={scanRev.some(r => !r.name.trim())} onClick={applyScan}><Ico d={I.check} size={20} />اعتمد ووزّع</button>
+                        <button type="button" className="bk-btn bk-btn-go" disabled={scanRev.some(r => !r.name.trim() || r.amb.some(a => !a.pick))} onClick={applyScan}><Ico d={I.check} size={20} />اعتمد ووزّع</button>
                         <button type="button" className="bk-btn bk-btn-light" onClick={() => { setScanRev(null); setScanRaw(''); }}>إلغاء</button>
                     </div>
                 </div> : null}

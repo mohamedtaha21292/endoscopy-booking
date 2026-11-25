@@ -53,3 +53,7 @@ export function mergeDoctors(stored: DoctorRec[], canonical: DoctorRec[] = CANON
     const extras = (stored || []).filter(d => !used.has(d.id) && !merged.some(m => m.id === d.id || normDocName(m.name) === normDocName(d.name)));
     return [...merged, ...extras];
 }
+
+// Exact rename requested by Mohamed 2026-11-25: "د.اشرف شحته" -> "د.اشرف شحاته" (applied wherever that doctor's name is stored).
+export const fixDoctorName = (n: string) => (normDocName(n) === 'اشرف شحته' ? 'د.اشرف شحاته' : n);
+export const nameNeedsFix = (n?: string) => !!n && fixDoctorName(n) !== n;
