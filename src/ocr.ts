@@ -1,7 +1,7 @@
 // On-device photo reading for the operating list. Nothing is uploaded: the OCR engine and
 // Arabic model are served from this site and run inside the phone's browser.
 export type Amb = { line: string; proc: string; n: number };
-export type ScanGroup = { name: string; known: boolean; parts: { proc: string; count: number }[]; amb: Amb[] };
+export type ScanGroup = { name: string; known: boolean; parts: { proc: string; count: number }[]; amb: Amb[]; key?: string; unassigned?: boolean };
 
 const AR_DIG = '٠١٢٣٤٥٦٧٨٩';
 export const norm = (s: string) => s
@@ -46,7 +46,18 @@ export function procOf(line: string): Proc | null {
 const PROC_WORDS = ['معده', 'قولون', 'كولون', 'و', 'ercp', 'egd', 'colonoscopy', 'منظار', 'علوي', 'سفلي', 'حاله', 'حالات', 'حالة', 'x'];
 const onlyProcWords = (line: string) => words(line).every(w => /^\d+$/.test(w) || PROC_WORDS.some(p => near(w, p)));
 
-export function parseList(text: string, doctors: { name: string }[]): ScanGroup[] {
+// Table rows such as "(M, 67) EGD + Colonoscopy X Hassan Abdelaziz Elhaw MOHAMMED": one row = one case, the English surgeon name on the same row is the group.
+export const aliasKey = (n: string) => n.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(w => w.length >= 3).join(' ');
+function rowOf(line: string): { proc: Proc; key: string; label: string } | null {
+    const p = procOf(line);
+    if (!p) return null;
+    const ws = line.replace(/[^A-Za-z' -]/g, ' ').split(/\s+/).map(w => w.replace(/^[-']+|[-']+$/g, '')).filter(w => w.length >= 3)
+        .filter(w => { const l = w.toLowerCase(); return !(isEgd(l) || isColonoscopy(l) || isErcp(l) || ['and', 'strt', 'team', 'surgery', 'procedures'].includes(l)); });
+    if (ws.length < 2) return null;
+    return { proc: p, key: aliasKey(ws.join(' ')), label: ws.join(' ') };
+}
+export function parseList(text: string, doctors: { name: string }[], aliases: Record<string, string> = {}): ScanGroup[] {
+    const rowDoc = text.split('\n').some(l => rowOf(l.trim()));
     const lastName = (n: string) => { const ws = words(n).filter(w => w !== 'د' && w !== 'دكتور'); return ws[ws.length - 1] || ''; };
     const known = doctors.map(d => ({ name: d.name, last: lastName(d.name) })).filter(d => d.last);
     const groups: ScanGroup[] = [];
@@ -57,9 +68,27 @@ export function parseList(text: string, doctors: { name: string }[]): ScanGroup[
         if (!g) { g = { name, known: isKnown, parts: [], amb: [] }; groups.push(g); }
         return g;
     };
+    const tget = (r: { key: string; label: string }) => {
+        let g = groups.find(x => x.key && (x.key === r.key || (Math.min(x.key.length, r.key.length) >= 10 && lev(x.key, r.key) <= 3)));
+        if (!g) {
+            const ak = Object.keys(aliases).find(k => k === r.key || (Math.min(k.length, r.key.length) >= 10 && lev(k, r.key) <= 3));
+            const reg = ak ? doctors.find(d => d.name === aliases[ak]) : undefined;
+            g = { name: reg ? reg.name : r.label, known: !!reg, parts: [], amb: [], key: r.key };
+            groups.push(g);
+        }
+        return g;
+    };
     for (const raw of text.split('\n')) {
         const line = raw.trim();
         if (line.length < 2) continue;
+        const row = rowOf(line);
+        if (row) { const g = tget(row); const e = g.parts.find(x => x.proc === row.proc); if (e) e.count++; else g.parts.push({ proc: row.proc, count: 1 }); continue; }
+        if (rowDoc && procOf(line)) {
+            let g = groups.find(x => x.unassigned);
+            if (!g) { g = { name: 'غير محدد (سطر من غير اسم جراح)', known: false, parts: [], amb: [], unassigned: true }; groups.push(g); }
+            const pp = procOf(line)!; const e = g.parts.find(x => x.proc === pp); if (e) e.count++; else g.parts.push({ proc: pp, count: 1 });
+            continue;
+        }
         const ws = words(line);
         const p = procOf(line);
         const hit = known.find(d => ws.some(w => near(w, d.last)));
@@ -108,29 +137,56 @@ export async function prepImage(file: File): Promise<HTMLCanvasElement> {
     return c;
 }
 
+// Photos of a screen or glossy paper (moire, coloured background): grayscale, light blur to remove the pattern, stretch contrast.
+export function enhance(src: HTMLCanvasElement): HTMLCanvasElement {
+    const w = src.width, h = src.height;
+    const x = src.getContext('2d')!; const img = x.getImageData(0, 0, w, h); const d = img.data;
+    let g = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) g[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+    const box = (a: Float32Array, horiz: boolean) => {
+        const o = new Float32Array(a.length); const n = horiz ? w : h; const m = horiz ? h : w;
+        for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) {
+            let sum = 0, c = 0;
+            for (let k = -1; k <= 1; k++) { const ii = i + k; if (ii >= 0 && ii < n) { sum += a[horiz ? j * w + ii : ii * w + j]; c++; } }
+            o[horiz ? j * w + i : i * w + j] = sum / c;
+        }
+        return o;
+    };
+    for (let r = 0; r < 3; r++) g = box(box(g, true), false);
+    const hist = new Uint32Array(256); for (let i = 0; i < g.length; i++) hist[Math.max(0, Math.min(255, Math.round(g[i])))]++;
+    const q = (f: number) => { let c = 0; for (let v = 0; v < 256; v++) { c += hist[v]; if (c >= g.length * f) return v; } return 255; };
+    const lo = q(0.01), hi = Math.max(lo + 1, q(0.99));
+    for (let i = 0; i < g.length; i++) { const v = Math.max(0, Math.min(255, ((g[i] - lo) * 255) / (hi - lo))); d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
+    const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d')!.putImageData(img, 0, 0);
+    return c;
+}
+
 export async function readImage(file: File, onProgress: (p: number) => void): Promise<string[]> {
     const T: any = await import('tesseract.js');
     const base = new URL('./ocr/', document.baseURI).href;
+    const total = 5;
     let k = 0;
     const canvas = await prepImage(file);
-    const worker = await T.createWorker('ara+eng', 1, {
+    const mk = (langs: string) => T.createWorker(langs, 1, {
         workerPath: base + 'worker.min.js',
         corePath: base,
         langPath: base,
         gzip: true,
         workerBlobURL: false,
-        logger: (m: any) => { if (m.status === 'recognizing text') onProgress((k + m.progress) / 3); },
+        logger: (m: any) => { if (m.status === 'recognizing text') onProgress((k + m.progress) / total); },
     });
+    const out: string[] = [];
+    // 1) English-only reads of the enhanced image (best for English tables on screens), 2) Arabic+English reads of the original (handwriting, Arabic lists).
+    const w1 = await mk('eng');
     try {
-        const out: string[] = [];
-        for (const psm of ['4', '11', '3']) {
-            await worker.setParameters({ tessedit_pageseg_mode: psm });
-            const r = await worker.recognize(canvas);
-            out.push(String(r.data.text || ''));
-            k++;
-        }
-        return out;
-    } finally { await worker.terminate(); }
+        const enh = enhance(canvas);
+        for (const psm of ['6', '4']) { await w1.setParameters({ tessedit_pageseg_mode: psm }); const r = await w1.recognize(enh); out.push(String(r.data.text || '')); k++; }
+    } finally { await w1.terminate(); }
+    const w2 = await mk('ara+eng');
+    try {
+        for (const psm of ['4', '11', '3']) { await w2.setParameters({ tessedit_pageseg_mode: psm }); const r = await w2.recognize(canvas); out.push(String(r.data.text || '')); k++; }
+    } finally { await w2.terminate(); }
+    return out;
 }
 
 // Lines that look like case rows (they carry a number) but were not read as a known procedure or consultant.

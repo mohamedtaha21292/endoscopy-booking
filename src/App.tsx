@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalState } from './useLocalState';
 import { mergeBookings, mergeDoctors, CANON_DOCTORS, fixDoctorName, nameNeedsFix } from './migrate';
 import { cardImageURL, opListImageURL } from './cardImage';
-import { readImage, parseList, unclearLines, norm as ocrNorm } from './ocr';
+import { readImage, parseList, unclearLines, norm as ocrNorm, aliasKey } from './ocr';
 
 type Doctor = { id: string; name: string; day?: string };
 type Booking = { id: string; doctorId: string; doctorName: string; patient: string; proc: string; day: string; time: string; status: 'confirmed' | 'pending'; sex?: string; age?: string; room?: string; count?: number; parts?: { proc: string; count: number }[] };
@@ -148,13 +148,14 @@ export function App() {
     const opExtraKey = JSON.stringify(opExtras);
     useEffect(() => { setOpCardUrl(null); setOpShareNote(''); }, [opExtraKey]);
     // Photo of the paper list: read on the phone, shown for review, applied only after the user agrees.
-    type Rev = { name: string; known: boolean; text: string; amb: { line: string; proc: string; n: number; pick: '' | 'count' | 'row' }[]; skip: boolean; ok: boolean };
+    type Rev = { name: string; known: boolean; text: string; amb: { line: string; proc: string; n: number; pick: '' | 'count' | 'row' }[]; skip: boolean; ok: boolean; aliasKey?: string };
     const [scanBusy, setScanBusy] = useState(false);
     const [scanPct, setScanPct] = useState(0);
     const [scanErr, setScanErr] = useState('');
     const [scanRev, setScanRev] = useState<Rev[] | null>(null);
     const [scanRaw, setScanRaw] = useState('');
     const [scanAck, setScanAck] = useState(false);
+    const [aliasMap, setAliasMap] = useLocalState<Record<string, string>>('bk-alias.v1', {});
     const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files && e.target.files[0];
         e.target.value = '';
@@ -162,12 +163,16 @@ export function App() {
         setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null); setScanAck(false);
         try {
             const texts = await readImage(f, setScanPct);
-            const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + g.parts.reduce((b, p) => b + p.count, 0) + g.amb.length, 0);
-            const cands = texts.map(t => ({ t, g: parseList(t, doctors) })); cands.sort((a, b) => sum(b.g) - sum(a.g)); // stable: on a tie the first (row-ordered) reading wins
+            const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + (g.parts.reduce((b, p) => b + p.count, 0) + g.amb.length) * (g.unassigned ? -2 : 1), 0);
+            const all = texts.map((t, i) => ({ t, i, g: parseList(t, doctors, aliasMap) }));
+            // Reads 0-1 are English-only on the enhanced image (for English tables); 2-4 are Arabic+English on the original. Use the English-table reads only when they actually found table rows (surgeon names); otherwise keep the Arabic-list reads.
+            const rowReads = all.filter(c => c.i < 2 && c.g.some(g => g.key));
+            const cands = rowReads.length ? rowReads : all.filter(c => c.i >= 2);
+            cands.sort((a, b) => sum(b.g) - sum(a.g)); // stable: on a tie the first (row-ordered) reading wins
             const text = cands[0].t; const groups = cands[0].g;
             setScanRaw(text);
             if (!groups.some(g => g.parts.length || g.amb.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
-            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })), skip: false, ok: false })));
+            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })), skip: false, ok: false, aliasKey: g.key })));
         } catch { setScanErr('القراءة ما نفعتش على الجهاز ده. اكتب الأعداد بإيدك.'); }
         setScanBusy(false);
     };
@@ -467,6 +472,11 @@ export function App() {
                     <span className="bk-muted">الإجمالي المقروء: {scanRev.filter(r => !r.skip).reduce((a, r) => a + r.text.split('\n').reduce((b, l) => { const m = l.match(/^\s*([0-9٠-٩]+)/); return b + (m ? Number(m[1].replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))) : (l.trim() ? 1 : 0)); }, 0), 0)} حالة{scanRev.some(r => r.amb.some(a => !a.pick)) ? ` + ${scanRev.reduce((a, r) => a + r.amb.filter(x => !x.pick).length, 0)} سطر مستني اختيارك` : ''}</span>
                     {scanRev.map((r, i) => <div key={i} className="bk-field">
                         <input dir="rtl" value={r.name} placeholder="اسم الاستشاري" onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} />
+                        {!r.skip && r.aliasKey && !isReg(r.name) ? <div className="bk-field"><span className="bk-muted">اسم الجراح في الصورة بالإنجليزي: {r.name}. اختار الدكتور المسجل ليه (هيتحفظ للمرة الجاية):</span>
+                            <select dir="rtl" value="" onChange={ev => { const dn = ev.target.value; if (!dn) return; setAliasMap({ ...aliasMap, [r.aliasKey as string]: dn }); setScanRev(scanRev.map((x, j) => j === i ? { ...x, name: dn } : x)); }}>
+                                <option value="">اختار الدكتور</option>
+                                {doctors.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                            </select></div> : null}
                         {!r.skip && !isReg(r.name) ? <div className="bk-err" role="group">
                             <div>الاسم ده مش من الأطباء المسجلين. صححه، أو أكده، أو استبعد المجموعة دي (مش هتتوزع قبل كده).</div>
                             <div className="bk-two">
