@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalState } from './useLocalState';
 import { mergeBookings, mergeDoctors, CANON_DOCTORS } from './migrate';
 import { cardImageURL, opListImageURL } from './cardImage';
+import { readImage, parseList } from './ocr';
 
 type Doctor = { id: string; name: string; day?: string };
 type Booking = { id: string; doctorId: string; doctorName: string; patient: string; proc: string; day: string; time: string; status: 'confirmed' | 'pending'; sex?: string; age?: string; room?: string; count?: number; parts?: { proc: string; count: number }[] };
@@ -139,6 +140,40 @@ export function App() {
     const opTotal = opGroups.reduce((a, g) => a + g.total, 0);
     const opExtraKey = JSON.stringify(opExtras);
     useEffect(() => { setOpCardUrl(null); setOpShareNote(''); }, [opExtraKey]);
+    // Photo of the paper list: read on the phone, shown for review, applied only after the user agrees.
+    type Rev = { name: string; known: boolean; text: string };
+    const [scanBusy, setScanBusy] = useState(false);
+    const [scanPct, setScanPct] = useState(0);
+    const [scanErr, setScanErr] = useState('');
+    const [scanRev, setScanRev] = useState<Rev[] | null>(null);
+    const [scanRaw, setScanRaw] = useState('');
+    const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null);
+        try {
+            const texts = await readImage(f, setScanPct);
+            const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + g.parts.reduce((b, p) => b + p.count, 0), 0);
+            const cands = texts.map(t => ({ t, g: parseList(t, doctors) })); cands.sort((a, b) => sum(b.g) - sum(a.g)); // stable: on a tie the first (row-ordered) reading wins
+            const text = cands[0].t; const groups = cands[0].g;
+            setScanRaw(text);
+            if (!groups.some(g => g.parts.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
+            else setScanRev(groups.filter(g => g.parts.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n') })));
+        } catch { setScanErr('القراءة ما نفعتش على الجهاز ده. اكتب الأعداد بإيدك.'); }
+        setScanBusy(false);
+    };
+    const applyScan = () => {
+        if (!scanRev) return;
+        const mainName = opDoctor ? opDoctor.name : '';
+        const main = scanRev.filter(r => r.name === mainName);
+        const others = scanRev.filter(r => r.name !== mainName);
+        if (main.length) setOpText(main.map(r => r.text).join('\n'));
+        const merged = new Map<string, string>();
+        others.forEach(r => merged.set(r.name, merged.has(r.name) ? merged.get(r.name) + '\n' + r.text : r.text));
+        if (others.length) setOpExtraAll({ ...opExtraAll, [opDate]: Array.from(merged, ([name, text]) => ({ name, text })) });
+        setScanRev(null); setScanRaw('');
+    };
     const makeOpCard = async () => {
         if (!ready || !opTotal || opMissingName) return;
         if (opParts.length) setOpLists({ ...opLists, [opDay]: opParts });
@@ -378,9 +413,31 @@ export function App() {
         {tab === 'oplist' && !opCardUrl && <>
             <div className="bk-card">
                 <h2 className="bk-h2">لستة العمليات الأسبوعية</h2>
-                <p className="bk-muted">الأطباء ثابتين كل أسبوع من السبت للخميس — اختار اليوم واكتب عدد الحالات وتصنيفها، والليستة بتتحفظ على جهازك وتفضل للأسبوع اللي بعده.</p>
                 <div className="bk-days">{OP_DAYS.map(w => { const dd = doctors.find(x => x.day === w); return <button key={w} type="button" className={'bk-day' + (w === opDay && opDate === nextWeekday(w) ? ' on' : '')} onClick={() => setOpDate(nextWeekday(w))}>{w}<small>{dd ? dd.name.replace(/^د\.\s*/, '') : '—'}</small></button>; })}</div>
                 <label className="bk-field"><span>تاريخ اللستة</span><input type="date" value={opDate} onChange={e => { if (e.target.value) setOpDate(e.target.value); }} /></label>
+            </div>
+            <div className="bk-card">
+                <h2 className="bk-h2">تصوير الليستة</h2>
+                <div className="bk-two">
+                    <label className="bk-btn bk-btn-go" style={{ cursor: 'pointer' }}><Ico d={I.plus} size={20} />صوّر الليستة<input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onScanFile} /></label>
+                    <label className="bk-btn bk-btn-light" style={{ cursor: 'pointer' }}>من المعرض<input type="file" accept="image/*" style={{ display: 'none' }} onChange={onScanFile} /></label>
+                </div>
+                {scanBusy ? <p className="bk-muted" role="status">بقرا الصورة على موبايلك… {Math.round(scanPct * 100)}%</p> : null}
+                {scanErr ? <p className="bk-err">{scanErr}</p> : null}
+                {scanRev ? <div className="bk-quick">
+                    <strong>راجع قبل الاعتماد</strong>
+                    <span className="bk-muted">القراءة الآلية ممكن تغلط، خصوصًا الخط اليدوي. عدّل أي سطر.</span>
+                    {scanRev.map((r, i) => <div key={i} className="bk-field">
+                        <input dir="rtl" value={r.name} placeholder="اسم الاستشاري" onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} />
+                        {!r.known ? <p className="bk-err">الاسم ده مش من الأطباء المسجلين — راجعه.</p> : null}
+                        <textarea className="bk-quick-text" rows={Math.max(3, r.text.split('\n').length)} dir="rtl" value={r.text} onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, text: ev.target.value } : x))} />
+                    </div>)}
+                    <details><summary className="bk-muted">النص اللي اتقرا</summary><pre dir="rtl" style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{scanRaw}</pre></details>
+                    <div className="bk-two">
+                        <button type="button" className="bk-btn bk-btn-go" disabled={scanRev.some(r => !r.name.trim())} onClick={applyScan}><Ico d={I.check} size={20} />اعتمد ووزّع</button>
+                        <button type="button" className="bk-btn bk-btn-light" onClick={() => { setScanRev(null); setScanRaw(''); }}>إلغاء</button>
+                    </div>
+                </div> : null}
             </div>
             <div className="bk-card">
                 <div className="bk-row">
@@ -395,7 +452,7 @@ export function App() {
             {opExtras.map((e, i) => <div className="bk-card" key={i}>
                 <div className="bk-row">
                     <div className="bk-badge"><Ico d={I.doc} /></div>
-                    <div style={{ flex: 1 }}><h2 className="bk-h2">استشاري إضافي {i + 1}</h2><p className="bk-muted">معاه حالات في نفس اليوم</p></div>
+                    <div style={{ flex: 1 }}><h2 className="bk-h2">استشاري آخر{opExtras.length > 1 ? ` · ${i + 1}` : ''}</h2></div>
                     <button type="button" className="bk-btn bk-btn-light bk-del" onClick={() => setOpExtras(opExtras.filter((_, j) => j !== i))}>حذف</button>
                 </div>
                 <label className="bk-field"><span>اسم الاستشاري</span><input list="bk-op-docs" dir="rtl" value={e.name} placeholder="اختار من الأطباء أو اكتب الاسم" onChange={ev => setOpExtras(opExtras.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} /></label>
@@ -407,7 +464,7 @@ export function App() {
             </div>)}
             <datalist id="bk-op-docs">{doctors.map(d => <option key={d.id} value={d.name} />)}</datalist>
             <div className="bk-card">
-                <button type="button" className="bk-btn bk-btn-light" onClick={() => setOpExtras([...opExtras, { name: '', text: '' }])}>+ إضافة استشاري معاه حالات</button>
+                <button type="button" className="bk-btn bk-btn-light" onClick={() => setOpExtras([...opExtras, { name: '', text: '' }])}>+ إضافة استشاري آخر</button>
                 <button type="button" className="bk-btn bk-btn-go" disabled={!opTotal || opMissingName} onClick={makeOpCard}><Ico d={I.check} size={20} />حفظ وإنشاء صورة اللستة{opTotal ? ` (الإجمالي ${opTotal})` : ''}</button>
             </div>
         </>}
