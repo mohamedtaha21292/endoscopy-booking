@@ -118,18 +118,31 @@ export function App() {
         setOpShareNote('');
     }, [opDate, opText]);
     const opDoctor = doctors.find(d => d.day === opDay) || null;
-    const opParts = opText.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const parseParts = (t: string) => t.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
         const m = l.match(/^([0-9٠-٩]+)[\s:：-]*(.*)$/);
         const count = m ? Math.min(99, Number(m[1].replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))))) : 1;
         const proc = (m && m[2]) ? m[2].trim() : l;
         return { proc, count };
     });
-    const opTotal = opParts.reduce((a, p) => a + p.count, 0);
+    const opParts = parseParts(opText);
+    const opMainTotal = opParts.reduce((a, p) => a + p.count, 0);
+    // Extra consultants who bring cases on the same date (saved per date, not per weekday).
+    const [opExtraAll, setOpExtraAll, opExtraSaved] = useLocalState<Record<string, { name: string; text: string }[]>>('bk-opextra.v1', {});
+    const opExtras = opExtraAll[opDate] || [];
+    const setOpExtras = (list: { name: string; text: string }[]) => setOpExtraAll({ ...opExtraAll, [opDate]: list });
+    const opExtraGroups = opExtras.map(e => { const parts = parseParts(e.text); return { doctorName: e.name.trim(), parts, total: parts.reduce((a, p) => a + p.count, 0) }; }).filter(g => g.total > 0);
+    const opGroups = [
+        ...(opMainTotal > 0 ? [{ doctorName: opDoctor ? opDoctor.name : '', parts: opParts, total: opMainTotal }] : []),
+        ...opExtraGroups,
+    ];
+    const opTotal = opGroups.reduce((a, g) => a + g.total, 0);
+    const opExtraKey = JSON.stringify(opExtras);
+    useEffect(() => { setOpCardUrl(null); setOpShareNote(''); }, [opExtraKey]);
     const makeOpCard = async () => {
         if (!ready || !opTotal) return;
-        setOpLists({ ...opLists, [opDay]: opParts });
+        if (opParts.length) setOpLists({ ...opLists, [opDay]: opParts });
         setOpShareNote('');
-        try { setOpCardUrl(await opListImageURL({ day: opDay, date: opDate, doctorName: opDoctor ? opDoctor.name : '', parts: opParts, total: opTotal })); }
+        try { setOpCardUrl(await opListImageURL({ day: opDay, date: opDate, groups: opGroups, total: opTotal })); }
         catch { setOpCardUrl(null); }
     };
     const shareOpCard = async () => {
@@ -377,6 +390,22 @@ export function App() {
                     <span className="bk-muted">اكتب كل تصنيف وعدده في سطر</span>
                     <textarea className="bk-quick-text" rows={4} dir="rtl" placeholder={'مثال:\n3 معده\n2 قولون\n1 ERCP'} value={opText} onChange={e => setOpText(e.target.value)} />
                 </div>
+            </div>
+            {opExtras.map((e, i) => <div className="bk-card" key={i}>
+                <div className="bk-row">
+                    <div className="bk-badge"><Ico d={I.doc} /></div>
+                    <div style={{ flex: 1 }}><h2 className="bk-h2">استشاري إضافي {arDigits(i + 1)}</h2><p className="bk-muted">معاه حالات في نفس اليوم</p></div>
+                    <button type="button" className="bk-btn bk-btn-light" onClick={() => setOpExtras(opExtras.filter((_, j) => j !== i))}>حذف</button>
+                </div>
+                <label className="bk-field"><span>اسم الاستشاري</span><input list="bk-op-docs" dir="rtl" value={e.name} placeholder="اختار من الأطباء أو اكتب الاسم" onChange={ev => setOpExtras(opExtras.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} /></label>
+                <div className="bk-quick">
+                    <span className="bk-muted">اكتب كل تصنيف وعدده في سطر</span>
+                    <textarea className="bk-quick-text" rows={3} dir="rtl" placeholder={'مثال:\n2 معده\n1 قولون'} value={e.text} onChange={ev => setOpExtras(opExtras.map((x, j) => j === i ? { ...x, text: ev.target.value } : x))} />
+                </div>
+            </div>)}
+            <datalist id="bk-op-docs">{doctors.map(d => <option key={d.id} value={d.name} />)}</datalist>
+            <div className="bk-card">
+                <button type="button" className="bk-btn bk-btn-light" onClick={() => setOpExtras([...opExtras, { name: '', text: '' }])}>+ إضافة استشاري معاه حالات</button>
                 <button type="button" className="bk-btn bk-btn-go" disabled={!opTotal} onClick={makeOpCard}><Ico d={I.check} size={20} />حفظ وإنشاء صورة اللستة{opTotal ? ` (الإجمالي ${opTotal})` : ''}</button>
             </div>
         </>}

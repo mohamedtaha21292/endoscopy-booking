@@ -175,13 +175,18 @@ export async function cardImageURL(b: CardBooking): Promise<string> {
     return canvas.toDataURL('image/png');
 }
 
-type OpListCard = { day: string; date: string; doctorName: string; parts: { proc: string; count: number }[]; total: number };
+type OpGroup = { doctorName: string; parts: { proc: string; count: number }[]; total: number };
+type OpListCard = { day: string; date: string; groups: OpGroup[]; total: number };
 
 // Weekly operating-list card: petrol-green/gold theme matching the app brand, layout distinct from the booking card.
 export async function opListImageURL(c: OpListCard): Promise<string> {
     try { await Promise.all([document.fonts.load('700 40px Cairo'), document.fonts.load('700 64px Cairo'), document.fonts.ready]); } catch { /* fall back to system fonts */ }
 
-    const W2 = 1080, H2 = 1620;
+    const W2 = 1080;
+    const multi = c.groups.length > 1;
+    const rowH0 = 96;
+    const need = 484 + c.groups.reduce((a, g) => a + 150 + 56 + 90 + g.parts.length * rowH0 + 16 + 56, 0) + 116 + 210 + 20;
+    const H2 = Math.max(1620, need);
     const canvas = document.createElement('canvas');
     canvas.width = W2; canvas.height = H2;
     const ctx = canvas.getContext('2d');
@@ -245,54 +250,62 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     ctx.font = '700 40px Cairo';
     ctx.fillText(dateLine, W2 / 2, ty + 138);
 
-    // doctor panel
     const px = 72, pw = W2 - 144;
     let y = ty + th + 64;
-    roundRect(ctx, px, y, pw, 150, 30);
-    ctx.fillStyle = '#ffffff'; ctx.fill();
-    ctx.fillStyle = '#2a8a8c';
-    ctx.beginPath(); ctx.arc(px + 56, y + 75, 16, 0, Math.PI * 2); ctx.fill();
-    ctx.textAlign = 'right'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#7c9496';
-    ctx.font = '700 32px Cairo';
-    ctx.fillText('طبيب اليوم', px + pw - 40, y + 58);
-    ctx.fillStyle = '#0f4a52';
-    fitFont(ctx, c.doctorName || '—', 700, 54, pw - 220);
-    ctx.fillText(c.doctorName || '—', px + pw - 40, y + 118);
-    y += 150 + 56;
-
-    // classifications panel
     const footerTop = H2 - 210;
     const totalH = 116;
-    const maxPanelH = footerTop - 56 - totalH - 56 - y;
-    const rowH = Math.min(104, Math.floor((maxPanelH - 110) / Math.max(1, c.parts.length)));
-    const ph = 90 + c.parts.length * rowH + 16;
-    roundRect(ctx, px, y, pw, ph, 30);
-    ctx.fillStyle = '#ffffff'; ctx.fill();
-    ctx.textAlign = 'right'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#7c9496';
-    ctx.font = '700 32px Cairo';
-    ctx.fillText('الحالات وتصنيفها', px + pw - 40, y + 56);
-    let ry = y + 84;
-    c.parts.forEach((p, i) => {
+    const fitRow = Math.floor((footerTop - 56 - totalH - 56 - y - c.groups.reduce((a, g) => a + 150 + 56 + 90 + 16 + 56, 0)) / Math.max(1, c.groups.reduce((a, g) => a + g.parts.length, 0)));
+    const rowH = Math.max(60, Math.min(104, fitRow));
+    c.groups.forEach((g, gi) => {
+        // doctor panel
+        roundRect(ctx, px, y, pw, 150, 30);
+        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.fillStyle = gi === 0 ? '#2a8a8c' : '#c9a227';
+        ctx.beginPath(); ctx.arc(px + 56, y + 75, 16, 0, Math.PI * 2); ctx.fill();
         ctx.textAlign = 'right'; ctx.direction = 'rtl';
+        ctx.fillStyle = '#7c9496';
+        ctx.font = '700 32px Cairo';
+        ctx.fillText(!multi ? 'طبيب اليوم' : gi === 0 ? 'الاستشاري الأساسي' : 'استشاري معاه حالات', px + pw - 40, y + 58);
         ctx.fillStyle = '#0f4a52';
-        fitFont(ctx, p.proc, 700, 46, pw - 280);
-        ctx.fillText(p.proc, px + pw - 40, ry + rowH / 2 + 16);
-        ctx.fillStyle = '#187782';
-        ctx.beginPath(); ctx.arc(px + 78, ry + rowH / 2, 42, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center'; ctx.direction = 'ltr';
-        ctx.font = '700 46px Cairo';
-        ctx.fillText(String(p.count), px + 78, ry + rowH / 2 + 17);
-        if (i < c.parts.length - 1) {
-            ctx.strokeStyle = '#d3e3e3'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
-            ctx.beginPath(); ctx.moveTo(px + 40, ry + rowH); ctx.lineTo(px + pw - 40, ry + rowH); ctx.stroke();
-            ctx.setLineDash([]);
+        fitFont(ctx, g.doctorName || '—', 700, 54, pw - 220);
+        ctx.fillText(g.doctorName || '—', px + pw - 40, y + 118);
+        y += 150 + 56;
+
+        // classifications panel
+        const ph = 90 + g.parts.length * rowH + 16;
+        roundRect(ctx, px, y, pw, ph, 30);
+        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.textAlign = 'right'; ctx.direction = 'rtl';
+        ctx.fillStyle = '#7c9496';
+        ctx.font = '700 32px Cairo';
+        ctx.fillText('الحالات وتصنيفها', px + pw - 40, y + 56);
+        if (multi) {
+            ctx.textAlign = 'left'; ctx.direction = 'rtl';
+            ctx.fillStyle = '#187782';
+            ctx.font = '700 34px Cairo';
+            ctx.fillText(ltr(`${g.total} ${g.total === 1 ? 'حالة' : 'حالات'}`), px + 40, y + 56);
         }
-        ry += rowH;
+        let ry = y + 84;
+        g.parts.forEach((p, i) => {
+            ctx.textAlign = 'right'; ctx.direction = 'rtl';
+            ctx.fillStyle = '#0f4a52';
+            fitFont(ctx, p.proc, 700, 46, pw - 280);
+            ctx.fillText(p.proc, px + pw - 40, ry + rowH / 2 + 16);
+            ctx.fillStyle = '#187782';
+            ctx.beginPath(); ctx.arc(px + 78, ry + rowH / 2, Math.min(42, rowH / 2 - 8), 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center'; ctx.direction = 'ltr';
+            ctx.font = '700 46px Cairo';
+            ctx.fillText(String(p.count), px + 78, ry + rowH / 2 + 17);
+            if (i < g.parts.length - 1) {
+                ctx.strokeStyle = '#d3e3e3'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
+                ctx.beginPath(); ctx.moveTo(px + 40, ry + rowH); ctx.lineTo(px + pw - 40, ry + rowH); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            ry += rowH;
+        });
+        y += ph + 56;
     });
-    y += ph + 56;
 
     // total band
     roundRect(ctx, px, y, pw, totalH, 28);
