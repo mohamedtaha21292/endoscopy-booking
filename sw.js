@@ -1,4 +1,4 @@
-const CACHE = 'endoscopy-booking-v9';
+const CACHE = 'endoscopy-booking-v10';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './manifest.webmanifest'])));
   self.skipWaiting();
