@@ -110,9 +110,13 @@ export function App() {
         if (!ready) return;
         const parts = opLists[opDay] || [];
         setOpText(parts.map(p => `${p.count} ${p.proc}`).join('\n'));
+    }, [opDay, ready]);
+    // Any change to the full selected date or to the counts invalidates a generated
+    // card, so an old image can never stay visible or shareable under new inputs.
+    useEffect(() => {
         setOpCardUrl(null);
         setOpShareNote('');
-    }, [opDay, ready]);
+    }, [opDate, opText]);
     const opDoctor = doctors.find(d => d.day === opDay) || null;
     const opParts = opText.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
         const m = l.match(/^([0-9٠-٩]+)[\s:：-]*(.*)$/);
