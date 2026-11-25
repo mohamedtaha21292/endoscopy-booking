@@ -235,7 +235,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     ctx.fillText('Endoscopy Unit · قسم المناظير', W2 - mx, 172);
 
     // gold ribbon: title + date
-    const title = `لستة عمليات يوم ${c.day}`;
+    const title = `ليسته المناظير يوم ${c.day}`;
     const dateLine = `الموافق ${ltr(`${c.date.slice(8)}/${c.date.slice(5, 7)}/${c.date.slice(0, 4)}`)}`;
     const ty = 252, th = 168;
     const tg = ctx.createLinearGradient(0, ty, W2, ty + th);

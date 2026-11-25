@@ -189,7 +189,7 @@ export function App() {
             const file = new File([blob], 'lista-amaliyat.png', { type: 'image/png' });
             const nav: any = navigator;
             if (nav.canShare && nav.canShare({ files: [file] })) {
-                await nav.share({ files: [file], title: `لستة عمليات يوم ${opDay}` });
+                await nav.share({ files: [file], title: `ليسته المناظير يوم ${opDay}` });
                 return;
             }
         } catch { /* share not available or canceled */ }
@@ -201,6 +201,20 @@ export function App() {
     const weekTotal = bookings.filter(b => days.includes(b.day)).reduce((a, b) => a + (b.count ?? 1), 0);
     const dayBookings = bookings.filter(b => b.day === selDay);
     const dayDoctors = Array.from(new Set(dayBookings.map(b => b.doctorName)));
+    // Booked-days summary: every date that has any booking, upcoming first (nearest on top), then past (newest first).
+    const bookedDays = useMemo(() => {
+        const t = todayISO();
+        const uniq = Array.from(new Set(bookings.map(b => b.day)));
+        const cnt = (d: string) => bookings.filter(b => b.day === d).reduce((a, b) => a + (b.count ?? 1), 0);
+        const up = uniq.filter(d => d >= t).sort();
+        const past = uniq.filter(d => d < t).sort().reverse();
+        return [...up, ...past].map(d => ({ day: d, count: cnt(d) }));
+    }, [bookings]);
+    const openBookedDay = (d: string) => {
+        setCardId(null);
+        setSelDay(d);
+        setTimeout(() => { const el = document.getElementById('bk-day-section'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+    };
     // Worklist photos stay in page state only: local-state limits (16 KiB/value) cannot hold an image.
     const [dayPhotos, setDayPhotos] = useState<Record<string, string>>({});
     const dayPhoto = dayPhotos[selDay] || null;
@@ -296,7 +310,7 @@ export function App() {
         <div className="bk-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
             <button type="button" className={'bk-tab' + (tab === 'doctors' ? ' on' : '')} onClick={() => { setTab('doctors'); setCardId(null); }}><Ico d={I.doc} />الأطباء</button>
             <button type="button" className={'bk-tab' + (tab === 'cases' ? ' on' : '')} onClick={() => { setTab('cases'); setCardId(null); setSelDoc(null); setOpCardUrl(null); }}><Ico d={I.cal} /><span className="bk-tab-label">الحجوزات{weekTotal > 0 && <span className="bk-weekbadge" title="عدد الحالات المحجوزة خلال الأسبوع">{arDigits(weekTotal)}</span>}</span></button>
-            <button type="button" className={'bk-tab' + (tab === 'oplist' ? ' on' : '')} onClick={() => { setTab('oplist'); setCardId(null); setSelDoc(null); }}><Ico d={I.scope} />لستة العمليات</button>
+            <button type="button" className={'bk-tab' + (tab === 'oplist' ? ' on' : '')} onClick={() => { setTab('oplist'); setCardId(null); setSelDoc(null); }}><Ico d={I.scope} />ليسته المناظير</button>
         </div>
 
         {tab === 'doctors' && !selDoctor && <div className="bk-card">
@@ -361,6 +375,14 @@ export function App() {
         </>}
 
         {tab === 'cases' && !cardBooking && <>
+            {bookedDays.length > 0 && <div className="bk-card">
+                <h2 className="bk-h2">الأيام اللي فيها حجز</h2>
+                <p className="bk-muted">اضغط على اليوم لعرض حجوزاته على طول</p>
+                {bookedDays.map(x => <button key={x.day} type="button" className={'bk-dayrow' + (x.day === selDay ? ' on' : '')} onClick={() => openBookedDay(x.day)}>
+                    <span className="bk-dayrow-main">{dayName(x.day)}{x.day === todayISO() ? ' · اليوم' : ''} <bdi dir="ltr">{dm(x.day)}</bdi></span>
+                    <span className="bk-pill ok"><bdi dir="ltr">{arDigits(x.count)}</bdi> {x.count === 1 ? 'حالة' : 'حالات'}</span>
+                </button>)}
+            </div>}
             <div className="bk-card">
                 <h2 className="bk-h2">ليستة عمليات اليوم</h2>
                 {dayPhoto
@@ -373,7 +395,7 @@ export function App() {
                         <label className="bk-btn bk-btn-light" style={{ cursor: 'pointer' }}><Ico d={I.plus} size={20} />أرفق صورة الليستة<input type="file" accept="image/*" style={{ display: 'none' }} onChange={pickDayPhoto} /></label>
                     </>}
             </div>
-            <div className="bk-days">
+            <div className="bk-days" id="bk-day-section">
                 {days.map(d => <button key={d} type="button" className={'bk-day' + (d === selDay ? ' on' : '')} onClick={() => setSelDay(d)}>{dayName(d)}<small><bdi dir="ltr">{dm(d)}</bdi></small></button>)}
             </div>
             <label className="bk-field"><span>الأرشيف: اختار أي تاريخ لعرض حالاته المسجّلة</span><input type="date" value={selDay} onChange={e => { if (e.target.value) setSelDay(e.target.value); }} /></label>
@@ -412,7 +434,7 @@ export function App() {
 
         {tab === 'oplist' && !opCardUrl && <>
             <div className="bk-card">
-                <h2 className="bk-h2">لستة العمليات الأسبوعية</h2>
+                <h2 className="bk-h2">ليسته المناظير الأسبوعية</h2>
                 <div className="bk-days">{OP_DAYS.map(w => { const dd = doctors.find(x => x.day === w); return <button key={w} type="button" className={'bk-day' + (w === opDay && opDate === nextWeekday(w) ? ' on' : '')} onClick={() => setOpDate(nextWeekday(w))}>{w}<small>{dd ? dd.name.replace(/^د\.\s*/, '') : '—'}</small></button>; })}</div>
                 <label className="bk-field"><span>تاريخ اللستة</span><input type="date" value={opDate} onChange={e => { if (e.target.value) setOpDate(e.target.value); }} /></label>
             </div>
@@ -442,7 +464,7 @@ export function App() {
             <div className="bk-card">
                 <div className="bk-row">
                     <div className="bk-badge"><Ico d={I.doc} /></div>
-                    <div style={{ flex: 1 }}><h2 className="bk-h2">{opDoctor ? opDoctor.name : 'مفيش دكتور ثابت مسجّل لليوم ده'}</h2><p className="bk-muted">لستة عمليات يوم {opDay}</p></div>
+                    <div style={{ flex: 1 }}><h2 className="bk-h2">{opDoctor ? opDoctor.name : 'مفيش دكتور ثابت مسجّل لليوم ده'}</h2><p className="bk-muted">ليسته المناظير يوم {opDay}</p></div>
                 </div>
                 <div className="bk-quick">
                     <span className="bk-muted">اكتب كل تصنيف وعدده في سطر</span>
@@ -470,7 +492,7 @@ export function App() {
         </>}
 
         {tab === 'oplist' && opCardUrl && <>
-            <img className="bk-cardimg" src={opCardUrl} alt={`صورة لستة عمليات يوم ${opDay}`} />
+            <img className="bk-cardimg" src={opCardUrl} alt={`صورة ليسته المناظير يوم ${opDay}`} />
             <p className="bk-hint">الصورة جاهزة: اضغط عليها مطولًا لحفظها أو خذ لقطة شاشة لها، وابعتها من واتساب عندك.</p>
             <div className="bk-two">
                 <button type="button" className="bk-btn bk-btn-go" onClick={shareOpCard}><Ico d={I.send} size={20} />مشاركة على واتساب</button>

@@ -119,3 +119,10 @@ body { background: #e9f2f2; }
 .bk-btn.bk-del { width: auto; flex: none; min-height: 44px; margin-top: 0; padding: 0 18px; border-radius: 14px; font-size: 16px; }
 .bk-row > div[style] { min-width: 0; }
 .bk-err { color: #b3261e; font-size: 15px; font-weight: 700; margin: 6px 0 0; }
+
+/* booked-days summary */
+.bk-dayrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 14px; margin-top: 8px; border: 1.5px solid #c4dddc; border-radius: 14px; background: #fbfdfd; color: #123c42; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; text-align: start; }
+.bk-dayrow:active { background: #eef6f5; }
+.bk-dayrow.on { border-color: #0f5a63; background: #eaf4f3; }
+.bk-dayrow-main { min-width: 0; }
+.bk-dayrow .bk-pill { flex: none; }
