@@ -103,7 +103,7 @@ export async function cardImageURL(b: CardBooking): Promise<string> {
 
     // title inside a rounded accent frame + gold bar
     const isCount = !!(b.count && !b.patient);
-    const title = isCount ? 'تأكيد عدد حالات المناظير' : 'تأكيد حجز موعد إجراء منظار';
+    const title = isCount ? 'تأكيد حجز حالات المناظير' : 'تأكيد حجز موعد إجراء منظار';
     ctx.textAlign = 'center'; ctx.direction = 'rtl';
     const ts = fitFont(ctx, title, 700, 52, cw - 240);
     ctx.font = `700 ${ts}px Cairo`;
@@ -177,7 +177,7 @@ export async function cardImageURL(b: CardBooking): Promise<string> {
 
 type OpListCard = { day: string; date: string; doctorName: string; parts: { proc: string; count: number }[]; total: number };
 
-// Weekly operating-list card: navy/gold theme, intentionally different from the petrol booking card.
+// Weekly operating-list card: petrol-green/gold theme matching the app brand, layout distinct from the booking card.
 export async function opListImageURL(c: OpListCard): Promise<string> {
     try { await Promise.all([document.fonts.load('700 40px Cairo'), document.fonts.load('700 64px Cairo'), document.fonts.ready]); } catch { /* fall back to system fonts */ }
 
@@ -189,7 +189,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
 
     // navy background
     const bg = ctx.createLinearGradient(0, 0, W2, H2);
-    bg.addColorStop(0, '#122540'); bg.addColorStop(1, '#2b4f86');
+    bg.addColorStop(0, '#0f5a63'); bg.addColorStop(1, '#2a8a8c');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, W2, H2);
 
     // faint endoscope line-art, bottom-left
@@ -225,7 +225,7 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     ctx.fillStyle = '#ffffff';
     fitFont(ctx, 'مستشفى العربي', 700, 60, W2 - lw - 340);
     ctx.fillText('مستشفى العربي', W2 - mx, 122);
-    ctx.fillStyle = '#bcd3ee';
+    ctx.fillStyle = '#bfe3e3';
     fitFont(ctx, 'Endoscopy Unit · قسم المناظير', 700, 34, W2 - lw - 340);
     ctx.fillText('Endoscopy Unit · قسم المناظير', W2 - mx, 172);
 
@@ -237,11 +237,11 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     tg.addColorStop(0, '#e7c34a'); tg.addColorStop(1, '#c9a227');
     ctx.fillStyle = tg; ctx.fillRect(0, ty, W2, th);
     ctx.textAlign = 'center'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#122540';
+    ctx.fillStyle = '#0f4a52';
     const ts2 = fitFont(ctx, title, 700, 66, W2 - 200);
     ctx.font = `700 ${ts2}px Cairo`;
     ctx.fillText(title, W2 / 2, ty + 84);
-    ctx.fillStyle = '#3a3312';
+    ctx.fillStyle = '#0c4a52';
     ctx.font = '700 40px Cairo';
     ctx.fillText(dateLine, W2 / 2, ty + 138);
 
@@ -250,13 +250,13 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     let y = ty + th + 64;
     roundRect(ctx, px, y, pw, 150, 30);
     ctx.fillStyle = '#ffffff'; ctx.fill();
-    ctx.fillStyle = '#c9a227';
+    ctx.fillStyle = '#2a8a8c';
     ctx.beginPath(); ctx.arc(px + 56, y + 75, 16, 0, Math.PI * 2); ctx.fill();
     ctx.textAlign = 'right'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#5b7290';
+    ctx.fillStyle = '#7c9496';
     ctx.font = '700 32px Cairo';
     ctx.fillText('طبيب اليوم', px + pw - 40, y + 58);
-    ctx.fillStyle = '#122540';
+    ctx.fillStyle = '#0f4a52';
     fitFont(ctx, c.doctorName || '—', 700, 54, pw - 220);
     ctx.fillText(c.doctorName || '—', px + pw - 40, y + 118);
     y += 150 + 56;
@@ -270,23 +270,23 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
     roundRect(ctx, px, y, pw, ph, 30);
     ctx.fillStyle = '#ffffff'; ctx.fill();
     ctx.textAlign = 'right'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#5b7290';
+    ctx.fillStyle = '#7c9496';
     ctx.font = '700 32px Cairo';
     ctx.fillText('الحالات وتصنيفها', px + pw - 40, y + 56);
     let ry = y + 84;
     c.parts.forEach((p, i) => {
         ctx.textAlign = 'right'; ctx.direction = 'rtl';
-        ctx.fillStyle = '#122540';
+        ctx.fillStyle = '#0f4a52';
         fitFont(ctx, p.proc, 700, 46, pw - 280);
         ctx.fillText(p.proc, px + pw - 40, ry + rowH / 2 + 16);
-        ctx.fillStyle = '#2b4f86';
+        ctx.fillStyle = '#187782';
         ctx.beginPath(); ctx.arc(px + 78, ry + rowH / 2, 42, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center'; ctx.direction = 'ltr';
         ctx.font = '700 46px Cairo';
         ctx.fillText(String(p.count), px + 78, ry + rowH / 2 + 17);
         if (i < c.parts.length - 1) {
-            ctx.strokeStyle = '#dbe4ef'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
+            ctx.strokeStyle = '#d3e3e3'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
             ctx.beginPath(); ctx.moveTo(px + 40, ry + rowH); ctx.lineTo(px + pw - 40, ry + rowH); ctx.stroke();
             ctx.setLineDash([]);
         }
@@ -296,10 +296,10 @@ export async function opListImageURL(c: OpListCard): Promise<string> {
 
     // total band
     roundRect(ctx, px, y, pw, totalH, 28);
-    ctx.fillStyle = '#0e1c30'; ctx.fill();
+    ctx.fillStyle = '#0c4a52'; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = '#c9a227'; ctx.stroke();
     ctx.textAlign = 'right'; ctx.direction = 'rtl';
-    ctx.fillStyle = '#bcd3ee';
+    ctx.fillStyle = '#bfe3e3';
     ctx.font = '700 38px Cairo';
     ctx.fillText('إجمالي الحالات', px + pw - 40, y + 70);
     ctx.textAlign = 'left'; ctx.direction = 'rtl';
