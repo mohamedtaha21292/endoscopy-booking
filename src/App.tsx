@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalState } from './useLocalState';
 import { mergeBookings, mergeDoctors, CANON_DOCTORS, fixDoctorName, nameNeedsFix } from './migrate';
 import { cardImageURL, opListImageURL } from './cardImage';
-import { readImage, parseList, unclearLines } from './ocr';
+import { readImage, parseList, unclearLines, norm as ocrNorm } from './ocr';
 
 type Doctor = { id: string; name: string; day?: string };
 type Booking = { id: string; doctorId: string; doctorName: string; patient: string; proc: string; day: string; time: string; status: 'confirmed' | 'pending'; sex?: string; age?: string; room?: string; count?: number; parts?: { proc: string; count: number }[] };
@@ -148,17 +148,18 @@ export function App() {
     const opExtraKey = JSON.stringify(opExtras);
     useEffect(() => { setOpCardUrl(null); setOpShareNote(''); }, [opExtraKey]);
     // Photo of the paper list: read on the phone, shown for review, applied only after the user agrees.
-    type Rev = { name: string; known: boolean; text: string; amb: { line: string; proc: string; n: number; pick: '' | 'count' | 'row' }[] };
+    type Rev = { name: string; known: boolean; text: string; amb: { line: string; proc: string; n: number; pick: '' | 'count' | 'row' }[]; skip: boolean; ok: boolean };
     const [scanBusy, setScanBusy] = useState(false);
     const [scanPct, setScanPct] = useState(0);
     const [scanErr, setScanErr] = useState('');
     const [scanRev, setScanRev] = useState<Rev[] | null>(null);
     const [scanRaw, setScanRaw] = useState('');
+    const [scanAck, setScanAck] = useState(false);
     const onScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files && e.target.files[0];
         e.target.value = '';
         if (!f) return;
-        setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null);
+        setScanBusy(true); setScanPct(0); setScanErr(''); setScanRev(null); setScanAck(false);
         try {
             const texts = await readImage(f, setScanPct);
             const sum = (gs: ReturnType<typeof parseList>) => gs.reduce((a, g) => a + g.parts.reduce((b, p) => b + p.count, 0) + g.amb.length, 0);
@@ -166,14 +167,17 @@ export function App() {
             const text = cands[0].t; const groups = cands[0].g;
             setScanRaw(text);
             if (!groups.some(g => g.parts.length || g.amb.length)) setScanErr('ما قدرتش ألاقي تصنيفات واضحة (معده / قولون / ERCP) في الصورة. جرّب صورة أوضح ومن فوق، أو اكتب الأعداد بإيدك.');
-            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })) })));
+            else setScanRev(groups.filter(g => g.parts.length || g.amb.length).map(g => ({ name: g.name || (opDoctor ? opDoctor.name : ''), known: g.known, text: g.parts.map(p => `${p.count} ${p.proc}`).join('\n'), amb: g.amb.map(a => ({ ...a, pick: '' as const })), skip: false, ok: false })));
         } catch { setScanErr('القراءة ما نفعتش على الجهاز ده. اكتب الأعداد بإيدك.'); }
         setScanBusy(false);
     };
+    const isReg = (n: string) => doctors.some(d => ocrNorm(d.name).replace(/\s+/g, '') === ocrNorm(n).replace(/\s+/g, ''));
+    // Apply stays blocked while anything is unresolved: unchosen numeric lines, unregistered names (fix, confirm, or exclude), unreviewed unclear lines.
+    const scanBlocked = !scanRev || (unclearLines(scanRaw, doctors).length > 0 && !scanAck) || scanRev.some(r => !r.skip && (!r.name.trim() || r.amb.some(a => !a.pick) || (!isReg(r.name) && !r.ok)));
     const applyScan = () => {
-        if (!scanRev || scanRev.some(r => r.amb.some(a => !a.pick))) return;
+        if (!scanRev || scanBlocked) return;
         const mainName = opDoctor ? opDoctor.name : '';
-        const full = scanRev.map(r => ({ ...r, text: [r.text.trim(), ...r.amb.map(a => `${a.pick === 'count' ? a.n : 1} ${a.proc}`)].filter(Boolean).join('\n') }));
+        const full = scanRev.filter(r => !r.skip).map(r => ({ ...r, text: [r.text.trim(), ...r.amb.map(a => `${a.pick === 'count' ? a.n : 1} ${a.proc}`)].filter(Boolean).join('\n') }));
         const main = full.filter(r => r.name === mainName);
         const others = full.filter(r => r.name !== mainName);
         if (main.length) setOpText(main.map(r => r.text).join('\n'));
@@ -459,10 +463,18 @@ export function App() {
                     <strong>راجع قبل الاعتماد</strong>
                     <span className="bk-muted">القراءة الآلية ممكن تغلط، خصوصًا الخط اليدوي. عدّل أي سطر.</span>
                     {unclearLines(scanRaw, doctors).length ? <p className="bk-err">سطور مش واضحة ومتحسبتش، راجعها وضيفها بإيدك لو لازم: {unclearLines(scanRaw, doctors).join(' | ')}</p> : null}
-                    <span className="bk-muted">الإجمالي المقروء: {scanRev.reduce((a, r) => a + r.text.split('\n').reduce((b, l) => { const m = l.match(/^\s*([0-9٠-٩]+)/); return b + (m ? Number(m[1].replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))) : (l.trim() ? 1 : 0)); }, 0), 0)} حالة{scanRev.some(r => r.amb.some(a => !a.pick)) ? ` + ${scanRev.reduce((a, r) => a + r.amb.filter(x => !x.pick).length, 0)} سطر مستني اختيارك` : ''}</span>
+                    {unclearLines(scanRaw, doctors).length ? <label className="bk-muted"><input type="checkbox" checked={scanAck} onChange={ev => setScanAck(ev.target.checked)} /> راجعت السطور دي وهضيفها بإيدي لو لازم</label> : null}
+                    <span className="bk-muted">الإجمالي المقروء: {scanRev.filter(r => !r.skip).reduce((a, r) => a + r.text.split('\n').reduce((b, l) => { const m = l.match(/^\s*([0-9٠-٩]+)/); return b + (m ? Number(m[1].replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))) : (l.trim() ? 1 : 0)); }, 0), 0)} حالة{scanRev.some(r => r.amb.some(a => !a.pick)) ? ` + ${scanRev.reduce((a, r) => a + r.amb.filter(x => !x.pick).length, 0)} سطر مستني اختيارك` : ''}</span>
                     {scanRev.map((r, i) => <div key={i} className="bk-field">
                         <input dir="rtl" value={r.name} placeholder="اسم الاستشاري" onChange={ev => setScanRev(scanRev.map((x, j) => j === i ? { ...x, name: ev.target.value } : x))} />
-                        {!r.known ? <p className="bk-err">الاسم ده مش من الأطباء المسجلين — راجعه.</p> : null}
+                        {!r.skip && !isReg(r.name) ? <div className="bk-err" role="group">
+                            <div>الاسم ده مش من الأطباء المسجلين. صححه، أو أكده، أو استبعد المجموعة دي (مش هتتوزع قبل كده).</div>
+                            <div className="bk-two">
+                                <button type="button" className="bk-btn bk-btn-light" aria-pressed={r.ok} onClick={() => setScanRev(scanRev.map((x, j) => j === i ? { ...x, ok: !x.ok } : x))}>{r.ok ? '✓ ' : ''}أكد الاسم</button>
+                                <button type="button" className="bk-btn bk-btn-light" onClick={() => setScanRev(scanRev.map((x, j) => j === i ? { ...x, skip: true } : x))}>استبعد المجموعة</button>
+                            </div>
+                        </div> : null}
+                        {r.skip ? <div className="bk-err" role="group"><div>المجموعة دي مستبعدة ومش هتتوزع.</div><button type="button" className="bk-btn bk-btn-light" onClick={() => setScanRev(scanRev.map((x, j) => j === i ? { ...x, skip: false } : x))}>رجّعها</button></div> : null}
                         {r.amb.map((a, k) => <div key={k} className="bk-err" role="group">
                             <div>سطر محتاج اختيارك (مش متحسب لحد ما تختار): {a.line}</div>
                             <div className="bk-two">
@@ -474,7 +486,7 @@ export function App() {
                     </div>)}
                     <details><summary className="bk-muted">النص اللي اتقرا</summary><pre dir="rtl" style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{scanRaw}</pre></details>
                     <div className="bk-two">
-                        <button type="button" className="bk-btn bk-btn-go" disabled={scanRev.some(r => !r.name.trim() || r.amb.some(a => !a.pick))} onClick={applyScan}><Ico d={I.check} size={20} />اعتمد ووزّع</button>
+                        <button type="button" className="bk-btn bk-btn-go" disabled={scanBlocked} onClick={applyScan}><Ico d={I.check} size={20} />اعتمد ووزّع</button>
                         <button type="button" className="bk-btn bk-btn-light" onClick={() => { setScanRev(null); setScanRaw(''); }}>إلغاء</button>
                     </div>
                 </div> : null}
